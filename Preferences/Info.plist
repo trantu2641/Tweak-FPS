@@ -10,6 +10,9 @@
     <key>CFBundleName</key>
     <string>SystemFPSPrefs</string>
 
+    <key>CFBundleExecutable</key>
+    <string>SystemFPSPrefs</string>
+
     <key>CFBundlePackageType</key>
     <string>BNDL</string>
 
@@ -19,7 +22,7 @@
     <key>CFBundleShortVersionString</key>
     <string>1.0.2</string>
 
-    <key>NSPrincipalClass</key>
-    <string></string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
 </dict>
 </plist>
