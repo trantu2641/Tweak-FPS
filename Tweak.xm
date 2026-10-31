@@ -1,3 +1,4 @@
+
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
 #import <QuartzCore/QuartzCore.h>
@@ -18,7 +19,6 @@ static NSInteger gTargetFPS = 60;
 static BOOL gSystemFPSEnabled = NO;
 
 static NSHashTable<CADisplayLink *> *gDisplayLinks;
-
 static __thread BOOL gApplyingSystemFPS = NO;
 
 static char kOriginalFPSKey;
@@ -53,7 +53,6 @@ static void SystemFPSLoadSettings(void) {
                 &fps
             );
         }
-
         CFRelease(fpsValue);
     }
 
@@ -174,7 +173,6 @@ static void SystemFPSApplyToLink(CADisplayLink *link) {
             savedRange.count == 3) {
 
             CAFrameRateRange range;
-
             range.minimum = [savedRange[0] floatValue];
             range.maximum = [savedRange[1] floatValue];
             range.preferred = [savedRange[2] floatValue];
@@ -182,11 +180,8 @@ static void SystemFPSApplyToLink(CADisplayLink *link) {
             [link setPreferredFrameRateRange:range];
 
         } else if ([savedFPS isKindOfClass:NSNumber.class]) {
-
             [link setPreferredFramesPerSecond:savedFPS.integerValue];
-
         } else {
-
             [link setPreferredFramesPerSecond:0];
         }
     }
@@ -229,7 +224,7 @@ static void SystemFPSReloadCallback(
     SystemFPSRefreshAllLinks();
 }
 
-#pragma mark - CADisplayLink
+#pragma mark - CADisplayLink hooks
 
 %hook CADisplayLink
 
@@ -291,6 +286,10 @@ static void SystemFPSReloadCallback(
 
 %ctor {
     @autoreleasepool {
+
+        // QUAN TRỌNG: Kích hoạt toàn bộ hook Logos.
+        %init;
+
         SystemFPSLoadSettings();
         SystemFPSInitRegistry();
 
@@ -304,7 +303,7 @@ static void SystemFPSReloadCallback(
         );
 
         NSLog(
-            @"[SystemFPS] Loaded | %@ | FPS:%ld | PID:%d | Bundle:%@",
+            @"[SystemFPS] HOOKS INITIALIZED | %@ | FPS:%ld | PID:%d | Bundle:%@",
             gSystemFPSEnabled ? @"ON" : @"OFF",
             (long)gTargetFPS,
             getpid(),
