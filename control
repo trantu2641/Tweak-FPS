@@ -1,8 +1,8 @@
 Package: com.systemfps.tweak
 Name: SystemFPS
-Version: 1.0.0
-Architecture: iphoneos-arm64
-Description: Fixed system FPS controller for iOS 16.
+Version: 1.0.1
+Architecture: iphoneos-arm
+Description: Dieu khien toc do khung hinh iOS
 Maintainer: SystemFPS
 Author: SystemFPS
 Section: Tweaks
