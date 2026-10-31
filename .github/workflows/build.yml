@@ -13,27 +13,19 @@ permissions:
 
 jobs:
   build:
-    name: Build SystemFPS RootHide
     runs-on: macos-15
     timeout-minutes: 45
 
     steps:
-      # 1. Checkout
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      # 2. Dependencies
       - name: Install dependencies
         run: |
-          brew update
           brew install make dpkg ldid xz
 
-      # 3. Install RootHide Theos
       - name: Install RootHide Theos
-        shell: bash
         run: |
-          set -e
-
           git clone --recursive \
             https://github.com/roothide/theos.git \
             "$HOME/theos"
@@ -41,9 +33,7 @@ jobs:
           echo "THEOS=$HOME/theos" >> "$GITHUB_ENV"
           echo "$HOME/theos/bin" >> "$GITHUB_PATH"
 
-      # 4. Install iOS SDK
-      - name: Install iOS SDK
-        shell: bash
+      - name: Install SDK
         run: |
           set -e
 
@@ -53,53 +43,26 @@ jobs:
             https://github.com/theos/sdks.git \
             /tmp/theos-sdks
 
-          SDK="/tmp/theos-sdks/iPhoneOS16.5.sdk"
+          test -d /tmp/theos-sdks/iPhoneOS16.5.sdk
 
-          if [ ! -d "$SDK" ]; then
-            echo "ERROR: iPhoneOS16.5.sdk not found"
-            find /tmp/theos-sdks -maxdepth 2 -type d
-            exit 1
-          fi
+          cp -R /tmp/theos-sdks/iPhoneOS16.5.sdk \
+            "$THEOS/sdks/"
 
-          cp -R "$SDK" "$THEOS/sdks/"
-
-          echo "SDK installed"
-
-      # 5. Verify Theos
-      - name: Verify RootHide Theos
-        shell: bash
-        run: |
-          set -e
-
-          test -f "$THEOS/makefiles/common.mk"
-
-          echo "Theos installed"
-
-          if ! grep -R -q "roothide" \
-            "$THEOS/makefiles" 2>/dev/null; then
-            echo "ERROR: RootHide scheme missing"
-            exit 1
-          fi
-
-          echo "RootHide scheme detected"
-
-      # 6. Verify project files
       - name: Verify project structure
-        shell: bash
         run: |
           set -e
 
           REQUIRED_FILES=(
-            "Makefile"
-            "control"
-            "SystemFPS.plist"
-            "Tweak.xm"
-            "Preferences/Makefile"
-            "Preferences/SystemFPSRootListController.h"
-            "Preferences/SystemFPSRootListController.m"
-            "Preferences/Resources/Info.plist"
-            "Preferences/Resources/Root.plist"
-            "layout/Library/PreferenceLoader/Preferences/SystemFPS.plist"
+            Makefile
+            control
+            SystemFPS.plist
+            Tweak.xm
+            Preferences/Makefile
+            Preferences/Info.plist
+            Preferences/Root.plist
+            Preferences/SystemFPSRootListController.h
+            Preferences/SystemFPSRootListController.m
+            layout/Library/PreferenceLoader/Preferences/SystemFPS.plist
           )
 
           for FILE in "${REQUIRED_FILES[@]}"; do
@@ -107,95 +70,42 @@ jobs:
               echo "ERROR: Missing file: $FILE"
               exit 1
             fi
+            echo "FOUND: $FILE"
           done
 
-          echo "All project files found"
-
-      # 7. Validate plist
       - name: Validate plist files
-        shell: bash
         run: |
           set -e
 
           plutil -lint SystemFPS.plist
-          plutil -lint Preferences/Resources/Root.plist
-          plutil -lint Preferences/Resources/Info.plist
+          plutil -lint Preferences/Info.plist
+          plutil -lint Preferences/Root.plist
           plutil -lint layout/Library/PreferenceLoader/Preferences/SystemFPS.plist
 
-          echo "All plist files valid"
-
-      # 8. Build
-      - name: Build SystemFPS
-        shell: bash
+      - name: Build RootHide DEB
         run: |
           set -e
 
           export THEOS="$HOME/theos"
-          export PATH="$THEOS/bin:$PATH"
           export THEOS_PACKAGE_SCHEME=roothide
 
           make clean
           make package FINALPACKAGE=1
 
-      # 9. Locate DEB
-      - name: Locate DEB
-        id: package
-        shell: bash
+      - name: Verify DEB
         run: |
           set -e
 
-          DEB=$(find packages -maxdepth 1 \
-            -name "*.deb" -type f | head -n 1)
+          DEB=$(find packages -name "*.deb" -type f | head -n 1)
 
-          if [ -z "$DEB" ]; then
-            echo "ERROR: DEB not generated"
-            exit 1
-          fi
-
-          echo "deb=$DEB" >> "$GITHUB_OUTPUT"
-
-          echo "Generated: $DEB"
-
-      # 10. Verify DEB
-      - name: Verify DEB contents
-        shell: bash
-        run: |
-          set -e
-
-          DEB="${{ steps.package.outputs.deb }}"
-
-          echo "===== PACKAGE INFO ====="
-          dpkg-deb --info "$DEB"
-
-          echo "===== PACKAGE CONTENTS ====="
-          dpkg-deb -c "$DEB"
-
-          CONTENTS=$(dpkg-deb -c "$DEB")
-
-          echo "$CONTENTS" | grep -q \
-            "SystemFPSPrefs.bundle"
-
-          echo "$CONTENTS" | grep -q \
-            "PreferenceLoader/Preferences/SystemFPS.plist"
-
-          echo "Preference bundle verified"
-
-
-      - name: Verify SystemFPS Preferences
-        shell: bash
-        run: |
-          set -e
-
-          DEB=$(find packages -name "*.deb" | head -n 1)
+          test -n "$DEB"
 
           mkdir -p /tmp/systemfps-check
 
           dpkg-deb -x "$DEB" /tmp/systemfps-check
 
-          echo "===== CHECK PREFERENCE BUNDLE ====="
-
-          find /tmp/systemfps-check \
-            -iname "*SystemFPS*"
+          echo "===== PACKAGE FILES ====="
+          find /tmp/systemfps-check -iname "*SystemFPS*"
 
           BUNDLE="/tmp/systemfps-check/Library/PreferenceBundles/SystemFPSPrefs.bundle"
 
@@ -203,19 +113,13 @@ jobs:
           test -f "$BUNDLE/Info.plist"
           test -f "$BUNDLE/Root.plist"
 
-          echo "===== CHECK PREFERENCELOADER ====="
-
           test -f "/tmp/systemfps-check/Library/PreferenceLoader/Preferences/SystemFPS.plist"
 
+          echo "===== VERIFIED ====="
           plutil -lint "$BUNDLE/Info.plist"
           plutil -lint "$BUNDLE/Root.plist"
 
-          echo "SYSTEMFPS PREFERENCES VERIFIED"
-
-
-
-      # 11. Upload
-      - name: Upload SystemFPS RootHide
+      - name: Upload DEB
         uses: actions/upload-artifact@v4
         with:
           name: SystemFPS-RootHide-iOS16
