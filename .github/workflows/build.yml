@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   build:
-    name: Build SystemFPS
+    name: Build SystemFPS RootHide
     runs-on: macos-15
     timeout-minutes: 45
 
@@ -22,7 +22,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2. Install dependencies
+      # 2. Dependencies
       - name: Install dependencies
         run: |
           brew update
@@ -47,21 +47,23 @@ jobs:
         run: |
           set -e
 
-          mkdir -p "$HOME/theos/sdks"
+          mkdir -p "$THEOS/sdks"
 
           git clone --depth 1 \
             https://github.com/theos/sdks.git \
             /tmp/theos-sdks
 
-          if [ -d "/tmp/theos-sdks/iPhoneOS16.5.sdk" ]; then
-            cp -R /tmp/theos-sdks/iPhoneOS16.5.sdk \
-              "$HOME/theos/sdks/"
-          else
+          SDK="/tmp/theos-sdks/iPhoneOS16.5.sdk"
+
+          if [ ! -d "$SDK" ]; then
             echo "ERROR: iPhoneOS16.5.sdk not found"
+            find /tmp/theos-sdks -maxdepth 2 -type d
             exit 1
           fi
 
-          ls "$HOME/theos/sdks"
+          cp -R "$SDK" "$THEOS/sdks/"
+
+          echo "SDK installed"
 
       # 5. Verify Theos
       - name: Verify RootHide Theos
@@ -70,13 +72,16 @@ jobs:
           set -e
 
           test -f "$THEOS/makefiles/common.mk"
-          test -d "$THEOS/vendor"
 
-          echo "Theos installation OK"
+          echo "Theos installed"
 
-          grep -R -n "roothide" \
-            "$THEOS/makefiles" \
-            "$THEOS/vendor" 2>/dev/null || true
+          if ! grep -R -q "roothide" \
+            "$THEOS/makefiles" 2>/dev/null; then
+            echo "ERROR: RootHide scheme missing"
+            exit 1
+          fi
+
+          echo "RootHide scheme detected"
 
       # 6. Verify project files
       - name: Verify project structure
@@ -90,7 +95,6 @@ jobs:
             "SystemFPS.plist"
             "Tweak.xm"
             "Preferences/Makefile"
-            "Preferences/Root.plist"
             "Preferences/SystemFPSRootListController.h"
             "Preferences/SystemFPSRootListController.m"
             "Preferences/Resources/Info.plist"
@@ -107,20 +111,21 @@ jobs:
 
           echo "All project files found"
 
-      # 7. Verify property lists
+      # 7. Validate plist
       - name: Validate plist files
         shell: bash
         run: |
           set -e
 
           plutil -lint SystemFPS.plist
-          plutil -lint Preferences/Root.plist
           plutil -lint Preferences/Resources/Root.plist
           plutil -lint Preferences/Resources/Info.plist
           plutil -lint layout/Library/PreferenceLoader/Preferences/SystemFPS.plist
 
-      # 8. Build RootHide package
-      - name: Build SystemFPS RootHide
+          echo "All plist files valid"
+
+      # 8. Build
+      - name: Build SystemFPS
         shell: bash
         run: |
           set -e
@@ -132,8 +137,8 @@ jobs:
           make clean
           make package FINALPACKAGE=1
 
-      # 9. Find DEB
-      - name: Locate package
+      # 9. Locate DEB
+      - name: Locate DEB
         id: package
         shell: bash
         run: |
@@ -149,9 +154,9 @@ jobs:
 
           echo "deb=$DEB" >> "$GITHUB_OUTPUT"
 
-          echo "Generated package: $DEB"
+          echo "Generated: $DEB"
 
-      # 10. Verify package contents
+      # 10. Verify DEB
       - name: Verify DEB contents
         shell: bash
         run: |
@@ -162,7 +167,7 @@ jobs:
           echo "===== PACKAGE INFO ====="
           dpkg-deb --info "$DEB"
 
-          echo "===== PACKAGE FILES ====="
+          echo "===== PACKAGE CONTENTS ====="
           dpkg-deb -c "$DEB"
 
           CONTENTS=$(dpkg-deb -c "$DEB")
@@ -173,10 +178,10 @@ jobs:
           echo "$CONTENTS" | grep -q \
             "PreferenceLoader/Preferences/SystemFPS.plist"
 
-          echo "Preference bundle and registration found"
+          echo "Preference bundle verified"
 
-      # 11. Upload DEB
-      - name: Upload SystemFPS DEB
+      # 11. Upload
+      - name: Upload SystemFPS RootHide
         uses: actions/upload-artifact@v4
         with:
           name: SystemFPS-RootHide-iOS16
