@@ -3,13 +3,6 @@
 <plist version="1.0">
 <dict>
     <key>Filter</key>
-    <dict>
-        <key>Bundles</key>
-        <array>
-            <string>com.apple.springboard</string>
-            <string>com.apple.UIKit</string>
-            <string>com.apple.Security</string>
-        </array>
-    </dict>
+    <dict/>
 </dict>
 </plist>
