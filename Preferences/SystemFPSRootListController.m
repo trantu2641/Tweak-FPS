@@ -12,15 +12,57 @@ static CFStringRef const kNotification =
 static NSString * const kEnabledKey = @"EnabledBundleIDs";
 static NSString * const kSpringBoardID = @"com.apple.springboard";
 
+@interface SystemFPSRootListController () <
+    UISearchResultsUpdating
+>
+
+@property (nonatomic, strong) UISearchController *searchController;
+@property (nonatomic, copy) NSString *searchText;
+
+@end
+
 @implementation SystemFPSRootListController
+
+#pragma mark - Search
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
+
+    self.searchController =
+        [[UISearchController alloc]
+            initWithSearchResultsController:nil];
+
+    self.searchController.searchResultsUpdater = self;
+    self.searchController.obscuresBackgroundDuringPresentation = NO;
+    self.searchController.searchBar.placeholder =
+        @"Tìm tên ứng dụng hoặc Bundle ID";
+
+    self.navigationItem.searchController =
+        self.searchController;
+
+    self.navigationItem.hidesSearchBarWhenScrolling = NO;
+
+    self.definesPresentationContext = YES;
+}
+
+- (void)updateSearchResultsForSearchController:
+    (UISearchController *)searchController {
+
+    self.searchText =
+        searchController.searchBar.text ?: @"";
+
+    _specifiers = nil;
+    [self reloadSpecifiers];
+}
 
 #pragma mark - Preferences
 
 - (NSArray *)enabledBundleIDs {
-    CFPropertyListRef value = CFPreferencesCopyAppValue(
-        (__bridge CFStringRef)kEnabledKey,
-        kDomain
-    );
+    CFPropertyListRef value =
+        CFPreferencesCopyAppValue(
+            (__bridge CFStringRef)kEnabledKey,
+            kDomain
+        );
 
     if (!value) {
         return @[kSpringBoardID];
@@ -55,7 +97,7 @@ static NSString * const kSpringBoardID = @"com.apple.springboard";
     );
 }
 
-#pragma mark - Application list
+#pragma mark - Installed applications
 
 - (NSArray *)installedApplications {
     Class workspaceClass =
@@ -94,13 +136,28 @@ static NSString * const kSpringBoardID = @"com.apple.springboard";
     NSMutableArray *applications =
         [NSMutableArray array];
 
+    NSString *query =
+        [self.searchText stringByTrimmingCharactersInSet:
+            NSCharacterSet.whitespaceAndNewlineCharacterSet];
+
     for (id proxy in proxies) {
         NSString *bundleID = nil;
         NSString *displayName = nil;
+        BOOL isSystem = NO;
 
         @try {
-            bundleID = [proxy valueForKey:@"applicationIdentifier"];
-            displayName = [proxy valueForKey:@"localizedName"];
+            bundleID =
+                [proxy valueForKey:@"applicationIdentifier"];
+
+            displayName =
+                [proxy valueForKey:@"localizedName"];
+
+            id systemValue =
+                [proxy valueForKey:@"isSystemApplication"];
+
+            if ([systemValue respondsToSelector:@selector(boolValue)]) {
+                isSystem = [systemValue boolValue];
+            }
         }
         @catch (__unused NSException *exception) {
             continue;
@@ -116,32 +173,49 @@ static NSString * const kSpringBoardID = @"com.apple.springboard";
             displayName = bundleID;
         }
 
-        // SpringBoard có công tắc riêng.
         if ([bundleID isEqualToString:kSpringBoardID]) {
             continue;
         }
 
-        // Không đưa các ứng dụng hệ thống Apple vào danh sách app người dùng.
+        // Bổ sung nhận diện dự phòng cho ứng dụng Apple.
         if ([bundleID hasPrefix:@"com.apple."]) {
-            continue;
+            isSystem = YES;
+        }
+
+        if (query.length > 0) {
+            BOOL nameMatches =
+                [displayName rangeOfString:query
+                    options:NSCaseInsensitiveSearch].location
+                    != NSNotFound;
+
+            BOOL bundleMatches =
+                [bundleID rangeOfString:query
+                    options:NSCaseInsensitiveSearch].location
+                    != NSNotFound;
+
+            if (!nameMatches && !bundleMatches) {
+                continue;
+            }
         }
 
         [applications addObject:@{
             @"name": displayName,
-            @"bundleID": bundleID
+            @"bundleID": bundleID,
+            @"isSystem": @(isSystem)
         }];
     }
 
     [applications sortUsingComparator:
         ^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
-            return [a[@"name"] localizedCaseInsensitiveCompare:b[@"name"]];
-        }
-    ];
+
+        return [a[@"name"]
+            localizedCaseInsensitiveCompare:b[@"name"]];
+    }];
 
     return applications;
 }
 
-#pragma mark - Dynamic specifiers
+#pragma mark - Specifier helpers
 
 - (PSSpecifier *)makeGroup:(NSString *)name {
     return [PSSpecifier preferenceSpecifierNamed:name
@@ -170,35 +244,62 @@ static NSString * const kSpringBoardID = @"com.apple.springboard";
     return specifier;
 }
 
+#pragma mark - Specifiers
+
 - (NSArray *)specifiers {
     if (!_specifiers) {
         NSMutableArray *items =
             [[self loadSpecifiersFromPlistName:@"Root"
                                         target:self] mutableCopy];
 
-        // SpringBoard
+        NSArray *applications =
+            [self installedApplications];
+
+        NSMutableArray *systemApps =
+            [NSMutableArray array];
+
+        NSMutableArray *userApps =
+            [NSMutableArray array];
+
+        for (NSDictionary *app in applications) {
+            if ([app[@"isSystem"] boolValue]) {
+                [systemApps addObject:app];
+            } else {
+                [userApps addObject:app];
+            }
+        }
+
+        // SpringBoard riêng
         [items addObject:
-            [self makeGroup:@"ỨNG DỤNG HỆ THỐNG"]];
+            [self makeGroup:@"ĐIỀU KHIỂN HỆ THỐNG"]];
 
         [items addObject:
             [self makeSwitch:@"SpringBoard"
                     bundleID:kSpringBoardID]];
 
-        // User applications
+        // System applications
         [items addObject:
-            [self makeGroup:@"QUẢN LÝ ỨNG DỤNG"]];
+            [self makeGroup:@"ỨNG DỤNG HỆ THỐNG"]];
 
-        NSArray *applications = [self installedApplications];
-
-        for (NSDictionary *app in applications) {
+        for (NSDictionary *app in systemApps) {
             [items addObject:
                 [self makeSwitch:app[@"name"]
                         bundleID:app[@"bundleID"]]];
         }
 
-        if (applications.count == 0) {
+        // User applications
+        [items addObject:
+            [self makeGroup:@"ỨNG DỤNG ĐÃ CÀI"]];
+
+        for (NSDictionary *app in userApps) {
             [items addObject:
-                [self makeGroup:@"Không tìm thấy ứng dụng."]];
+                [self makeSwitch:app[@"name"]
+                        bundleID:app[@"bundleID"]]];
+        }
+
+        if (systemApps.count == 0 && userApps.count == 0) {
+            [items addObject:
+                [self makeGroup:@"Không tìm thấy ứng dụng"]];
         }
 
         _specifiers = items;
@@ -207,7 +308,7 @@ static NSString * const kSpringBoardID = @"com.apple.springboard";
     return _specifiers;
 }
 
-#pragma mark - Switch values
+#pragma mark - Switch
 
 - (id)readAppEnabled:(PSSpecifier *)specifier {
     NSString *bundleID =
@@ -230,9 +331,7 @@ static NSString * const kSpringBoardID = @"com.apple.springboard";
     NSMutableArray *enabled =
         [[self enabledBundleIDs] mutableCopy];
 
-    BOOL shouldEnable = [value boolValue];
-
-    if (shouldEnable) {
+    if ([value boolValue]) {
         if (![enabled containsObject:bundleID]) {
             [enabled addObject:bundleID];
         }
@@ -258,7 +357,8 @@ static NSString * const kSpringBoardID = @"com.apple.springboard";
             [[NSCharacterSet decimalDigitCharacterSet] invertedSet];
 
         if (str.length == 0 ||
-            [str rangeOfCharacterFromSet:invalid].location != NSNotFound) {
+            [str rangeOfCharacterFromSet:invalid].location
+                != NSNotFound) {
             return;
         }
 
