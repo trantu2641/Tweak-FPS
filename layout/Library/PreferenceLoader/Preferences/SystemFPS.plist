@@ -4,19 +4,22 @@
  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>bundle</key>
-    <string>SystemFPSPrefs</string>
+    <key>entry</key>
+    <dict>
+        <key>bundle</key>
+        <string>SystemFPSPrefs</string>
 
-    <key>cell</key>
-    <string>PSLinkCell</string>
+        <key>cell</key>
+        <string>PSLinkCell</string>
 
-    <key>detail</key>
-    <string>SystemFPSRootListController</string>
+        <key>detail</key>
+        <string>SystemFPSRootListController</string>
 
-    <key>isController</key>
-    <true/>
+        <key>isController</key>
+        <true/>
 
-    <key>label</key>
-    <string>SystemFPS</string>
+        <key>label</key>
+        <string>SystemFPS</string>
+    </dict>
 </dict>
 </plist>
