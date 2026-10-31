@@ -1,7 +1,7 @@
 Package: com.systemfps.tweak
 Name: SystemFPS
-Version: 1.0.1
-Architecture: iphoneos-arm
+Version: 1.0.3
+Architecture: iphoneos-arm64e
 Description: Dieu khien toc do khung hinh iOS
 Maintainer: SystemFPS
 Author: SystemFPS
