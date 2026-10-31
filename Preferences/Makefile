@@ -10,8 +10,11 @@ SystemFPSPrefs_PRIVATE_FRAMEWORKS = Preferences
 
 SystemFPSPrefs_INSTALL_PATH = /Library/PreferenceBundles
 
-# Copy all files inside Resources into the bundle
-SystemFPSPrefs_RESOURCE_DIRS = Resources
+# Explicitly package preference resources
+SystemFPSPrefs_RESOURCE_FILES = Resources/Root.plist
+
+# Use the custom bundle Info.plist
+SystemFPSPrefs_INFO_PLIST = Resources/Info.plist
 
 SystemFPSPrefs_CFLAGS = -fobjc-arc
 
