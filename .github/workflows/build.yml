@@ -180,6 +180,40 @@ jobs:
 
           echo "Preference bundle verified"
 
+
+      - name: Verify SystemFPS Preferences
+        shell: bash
+        run: |
+          set -e
+
+          DEB=$(find packages -name "*.deb" | head -n 1)
+
+          mkdir -p /tmp/systemfps-check
+
+          dpkg-deb -x "$DEB" /tmp/systemfps-check
+
+          echo "===== CHECK PREFERENCE BUNDLE ====="
+
+          find /tmp/systemfps-check \
+            -iname "*SystemFPS*"
+
+          BUNDLE="/tmp/systemfps-check/Library/PreferenceBundles/SystemFPSPrefs.bundle"
+
+          test -d "$BUNDLE"
+          test -f "$BUNDLE/Info.plist"
+          test -f "$BUNDLE/Root.plist"
+
+          echo "===== CHECK PREFERENCELOADER ====="
+
+          test -f "/tmp/systemfps-check/Library/PreferenceLoader/Preferences/SystemFPS.plist"
+
+          plutil -lint "$BUNDLE/Info.plist"
+          plutil -lint "$BUNDLE/Root.plist"
+
+          echo "SYSTEMFPS PREFERENCES VERIFIED"
+
+
+
       # 11. Upload
       - name: Upload SystemFPS RootHide
         uses: actions/upload-artifact@v4
