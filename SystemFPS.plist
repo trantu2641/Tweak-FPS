@@ -1,3 +1,4 @@
+
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -7,7 +8,25 @@
     <dict>
         <key>Bundles</key>
         <array>
+            <!-- SpringBoard -->
+            <string>com.apple.springboard</string>
+
+            <!-- Giữ phạm vi UIKit hiện tại -->
             <string>com.apple.UIKit</string>
+
+            <!-- Meta -->
+            <string>com.facebook.Messenger</string>
+            <string>com.facebook.Facebook</string>
+
+            <!-- Google -->
+            <string>com.google.ios.youtube</string>
+            <string>com.google.Photos</string>
+
+            <!-- TikTok -->
+            <string>com.zhiliaoapp.musically</string>
+
+            <!-- Zalo -->
+            <string>vn.com.vng.zingalo</string>
         </array>
     </dict>
 </dict>
