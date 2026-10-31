@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+ "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
     <key>Filter</key>
@@ -8,14 +9,6 @@
         <array>
             <string>com.apple.springboard</string>
         </array>
-
-        <key>Classes</key>
-        <array>
-            <string>UIApplication</string>
-        </array>
-
-        <key>Mode</key>
-        <string>Any</string>
     </dict>
 </dict>
 </plist>
