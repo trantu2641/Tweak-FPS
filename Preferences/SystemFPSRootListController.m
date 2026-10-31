@@ -1,7 +1,7 @@
 #import "SystemFPSRootListController.h"
 #import <Preferences/PSSpecifier.h>
 #import <CoreFoundation/CoreFoundation.h>
-#import <objc/runtime.h>
+#import <objc/message.h>
 
 static CFStringRef const kDomain =
     CFSTR("com.systemfps.preferences");
