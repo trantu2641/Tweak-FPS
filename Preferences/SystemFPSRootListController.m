@@ -1,9 +1,30 @@
 
 #import "SystemFPSRootListController.h"
 #import <CoreFoundation/CoreFoundation.h>
+#import <Preferences/PSSpecifier.h>
 
 static CFStringRef const kNotification =
     CFSTR("com.systemfps.preferences/reload");
+
+static BOOL IsValidFPS(id value) {
+    if (![value respondsToSelector:@selector(integerValue)])
+        return NO;
+
+    NSString *string = [value description];
+
+    NSCharacterSet *digits =
+        [NSCharacterSet decimalDigitCharacterSet];
+
+    if (string.length == 0 ||
+        [string rangeOfCharacterFromSet:
+            digits.invertedSet].location != NSNotFound) {
+        return NO;
+    }
+
+    NSInteger fps = [value integerValue];
+
+    return fps >= 25 && fps <= 60;
+}
 
 @implementation SystemFPSRootListController
 
@@ -18,6 +39,32 @@ static CFStringRef const kNotification =
 
 - (void)setPreferenceValue:(id)value
                 specifier:(PSSpecifier *)specifier {
+
+    if ([specifier.properties[@"key"]
+         isEqualToString:@"TargetFPS"]) {
+
+        if (!IsValidFPS(value)) {
+            UIAlertController *alert =
+            [UIAlertController
+                alertControllerWithTitle:@"FPS không hợp lệ"
+                message:@"Vui lòng nhập số nguyên từ 25 đến 60."
+                preferredStyle:UIAlertControllerStyleAlert];
+
+            [alert addAction:
+                [UIAlertAction
+                    actionWithTitle:@"Đồng ý"
+                    style:UIAlertActionStyleDefault
+                    handler:nil]];
+
+            [self presentViewController:alert
+                               animated:YES
+                             completion:nil];
+
+            return;
+        }
+
+        value = @([value integerValue]);
+    }
 
     [super setPreferenceValue:value
                     specifier:specifier];
