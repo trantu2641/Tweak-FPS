@@ -6,19 +6,23 @@
 static CFStringRef const kNotification =
     CFSTR("com.systemfps.preferences/reload");
 
-static NSString *SystemFPSPreferencesPath(void) {
-    const char *path =
-        jbroot("/var/mobile/Library/Preferences/com.systemfps.preferences.plist");
+#pragma mark - Paths
 
-    return path ? [NSString stringWithUTF8String:path] : nil;
+// Preferences nằm trên filesystem dữ liệu người dùng.
+// Không dùng jbroot() cho đường dẫn này.
+static NSString *SystemFPSPreferencesPath(void) {
+    return @"/var/mobile/Library/Preferences/com.systemfps.preferences.plist";
 }
 
+// Filter nằm trong jailbreak root nên phải dùng jbroot().
 static NSString *SystemFPSFilterPath(void) {
     const char *path =
         jbroot("/Library/MobileSubstrate/DynamicLibraries/SystemFPS.plist");
 
     return path ? [NSString stringWithUTF8String:path] : nil;
 }
+
+#pragma mark - Read preferences
 
 static NSArray *SystemFPSReadEnabledBundles(void) {
     NSString *path = SystemFPSPreferencesPath();
@@ -28,27 +32,36 @@ static NSArray *SystemFPSReadEnabledBundles(void) {
 
     id value = preferences[@"EnabledBundleIDs"];
 
+    NSMutableArray *bundles = [NSMutableArray array];
+
+    // SpringBoard luôn được giữ mặc định nếu chưa có cấu hình.
     if (![value isKindOfClass:NSArray.class]) {
         return @[@"com.apple.springboard"];
     }
 
-    NSMutableArray *result =
-        [NSMutableArray array];
-
     for (id item in (NSArray *)value) {
-        if ([item isKindOfClass:NSString.class] &&
-            [item length] > 0 &&
-            ![result containsObject:item]) {
-            [result addObject:item];
+        if (![item isKindOfClass:NSString.class]) {
+            continue;
+        }
+
+        NSString *bundleID = (NSString *)item;
+
+        if (bundleID.length == 0) {
+            continue;
+        }
+
+        if (![bundles containsObject:bundleID]) {
+            [bundles addObject:bundleID];
         }
     }
 
-    return result;
+    return bundles;
 }
 
+#pragma mark - Update ElleKit filter
+
 static BOOL SystemFPSWriteFilter(void) {
-    NSArray *bundles =
-        SystemFPSReadEnabledBundles();
+    NSArray *bundles = SystemFPSReadEnabledBundles();
 
     NSDictionary *filter = @{
         @"Filter": @{
@@ -72,7 +85,7 @@ static BOOL SystemFPSWriteFilter(void) {
 
     NSString *path = SystemFPSFilterPath();
 
-    if (!path) {
+    if (path.length == 0) {
         NSLog(@"[SystemFPSDaemon] Cannot resolve filter path");
         return NO;
     }
@@ -87,20 +100,21 @@ static BOOL SystemFPSWriteFilter(void) {
         error:nil];
 
     BOOL success =
-        [data writeToFile:path options:NSDataWritingAtomic error:&error];
+        [data writeToFile:path
+                  options:NSDataWritingAtomic
+                    error:&error];
 
     if (!success) {
-        NSLog(@"[SystemFPSDaemon] Write error: %@", error);
+        NSLog(@"[SystemFPSDaemon] Write failed: %@", error);
         return NO;
     }
 
-    NSLog(
-        @"[SystemFPSDaemon] Filter updated: %@",
-        bundles
-    );
+    NSLog(@"[SystemFPSDaemon] Filter updated: %@", bundles);
 
     return YES;
 }
+
+#pragma mark - Notification
 
 static void SystemFPSNotificationCallback(
     CFNotificationCenterRef center,
@@ -112,13 +126,16 @@ static void SystemFPSNotificationCallback(
     SystemFPSWriteFilter();
 }
 
+#pragma mark - Main
+
 int main(int argc, char *argv[]) {
     @autoreleasepool {
         NSLog(@"[SystemFPSDaemon] Starting");
 
-        // Cập nhật ngay khi daemon khởi động.
+        // Cập nhật filter khi daemon khởi động.
         SystemFPSWriteFilter();
 
+        // Theo dõi thay đổi công tắc trong Settings.
         CFNotificationCenterAddObserver(
             CFNotificationCenterGetDarwinNotifyCenter(),
             NULL,
