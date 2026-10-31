@@ -2,6 +2,7 @@
 #import <Preferences/PSSpecifier.h>
 #import <CoreFoundation/CoreFoundation.h>
 #import <objc/message.h>
+#import <dlfcn.h>
 
 static CFStringRef const kDomain =
     CFSTR("com.systemfps.preferences");
@@ -12,14 +13,38 @@ static CFStringRef const kNotification =
 static NSString * const kEnabledKey = @"EnabledBundleIDs";
 static NSString * const kSpringBoardID = @"com.apple.springboard";
 
-@interface SystemFPSRootListController () <
-    UISearchResultsUpdating
->
+@interface SystemFPSRootListController () <UISearchResultsUpdating>
 
 @property (nonatomic, strong) UISearchController *searchController;
 @property (nonatomic, copy) NSString *searchText;
 
 @end
+
+#pragma mark - Safe private API access
+
+static id SystemFPSReadProperty(id object, NSString *key) {
+    if (!object || key.length == 0) {
+        return nil;
+    }
+
+    @try {
+        return [object valueForKey:key];
+    }
+    @catch (__unused NSException *exception) {
+        return nil;
+    }
+}
+
+static NSString *SystemFPSStringProperty(id object, NSString *key) {
+    id value = SystemFPSReadProperty(object, key);
+
+    if ([value isKindOfClass:NSString.class] &&
+        [(NSString *)value length] > 0) {
+        return value;
+    }
+
+    return nil;
+}
 
 @implementation SystemFPSRootListController
 
@@ -34,6 +59,7 @@ static NSString * const kSpringBoardID = @"com.apple.springboard";
 
     self.searchController.searchResultsUpdater = self;
     self.searchController.obscuresBackgroundDuringPresentation = NO;
+
     self.searchController.searchBar.placeholder =
         @"Tìm tên ứng dụng hoặc Bundle ID";
 
@@ -52,6 +78,7 @@ static NSString * const kSpringBoardID = @"com.apple.springboard";
         searchController.searchBar.text ?: @"";
 
     _specifiers = nil;
+
     [self reloadSpecifiers];
 }
 
@@ -97,13 +124,37 @@ static NSString * const kSpringBoardID = @"com.apple.springboard";
     );
 }
 
+#pragma mark - Load LaunchServices
+
+- (Class)applicationWorkspaceClass {
+    static Class workspaceClass = Nil;
+    static dispatch_once_t onceToken;
+
+    dispatch_once(&onceToken, ^{
+        dlopen(
+            "/System/Library/Frameworks/MobileCoreServices.framework/MobileCoreServices",
+            RTLD_NOW
+        );
+
+        dlopen(
+            "/System/Library/PrivateFrameworks/MobileCoreServices.framework/MobileCoreServices",
+            RTLD_NOW
+        );
+
+        workspaceClass =
+            NSClassFromString(@"LSApplicationWorkspace");
+    });
+
+    return workspaceClass;
+}
+
 #pragma mark - Installed applications
 
 - (NSArray *)installedApplications {
-    Class workspaceClass =
-        NSClassFromString(@"LSApplicationWorkspace");
+    Class workspaceClass = [self applicationWorkspaceClass];
 
     if (!workspaceClass) {
+        NSLog(@"[SystemFPS] LSApplicationWorkspace unavailable");
         return @[];
     }
 
@@ -114,6 +165,7 @@ static NSString * const kSpringBoardID = @"com.apple.springboard";
         NSSelectorFromString(@"allInstalledApplications");
 
     if (![workspaceClass respondsToSelector:defaultSelector]) {
+        NSLog(@"[SystemFPS] defaultWorkspace unavailable");
         return @[];
     }
 
@@ -123,15 +175,24 @@ static NSString * const kSpringBoardID = @"com.apple.springboard";
     id workspace =
         sendClass(workspaceClass, defaultSelector);
 
-    if (![workspace respondsToSelector:applicationsSelector]) {
+    if (!workspace ||
+        ![workspace respondsToSelector:applicationsSelector]) {
+        NSLog(@"[SystemFPS] allInstalledApplications unavailable");
         return @[];
     }
 
     id (*sendObject)(id, SEL) =
         (id (*)(id, SEL))objc_msgSend;
 
-    NSArray *proxies =
+    id result =
         sendObject(workspace, applicationsSelector);
+
+    if (![result isKindOfClass:NSArray.class]) {
+        NSLog(@"[SystemFPS] Application result is not an array");
+        return @[];
+    }
+
+    NSArray *proxies = (NSArray *)result;
 
     NSMutableArray *applications =
         [NSMutableArray array];
@@ -141,35 +202,30 @@ static NSString * const kSpringBoardID = @"com.apple.springboard";
             NSCharacterSet.whitespaceAndNewlineCharacterSet];
 
     for (id proxy in proxies) {
-        NSString *bundleID = nil;
-        NSString *displayName = nil;
-        BOOL isSystem = NO;
 
-        @try {
+        // Bundle ID: đọc từng thuộc tính riêng biệt.
+        NSString *bundleID =
+            SystemFPSStringProperty(proxy, @"bundleIdentifier");
+
+        if (bundleID.length == 0) {
             bundleID =
-                [proxy valueForKey:@"applicationIdentifier"];
+                SystemFPSStringProperty(proxy, @"applicationIdentifier");
+        }
 
+        if (bundleID.length == 0) {
+            continue;
+        }
+
+        // Tên ứng dụng.
+        NSString *displayName =
+            SystemFPSStringProperty(proxy, @"localizedName");
+
+        if (displayName.length == 0) {
             displayName =
-                [proxy valueForKey:@"localizedName"];
-
-            id systemValue =
-                [proxy valueForKey:@"isSystemApplication"];
-
-            if ([systemValue respondsToSelector:@selector(boolValue)]) {
-                isSystem = [systemValue boolValue];
-            }
-        }
-        @catch (__unused NSException *exception) {
-            continue;
+                SystemFPSStringProperty(proxy, @"localizedShortName");
         }
 
-        if (![bundleID isKindOfClass:NSString.class] ||
-            bundleID.length == 0) {
-            continue;
-        }
-
-        if (![displayName isKindOfClass:NSString.class] ||
-            displayName.length == 0) {
+        if (displayName.length == 0) {
             displayName = bundleID;
         }
 
@@ -177,11 +233,35 @@ static NSString * const kSpringBoardID = @"com.apple.springboard";
             continue;
         }
 
-        // Bổ sung nhận diện dự phòng cho ứng dụng Apple.
+        // Nhận diện ứng dụng hệ thống.
+        BOOL isSystem = NO;
+
+        id systemValue =
+            SystemFPSReadProperty(proxy, @"isSystemApplication");
+
+        if ([systemValue respondsToSelector:@selector(boolValue)]) {
+            isSystem = [systemValue boolValue];
+        }
+
+        NSString *applicationType =
+            SystemFPSStringProperty(proxy, @"applicationType");
+
+        if ([applicationType caseInsensitiveCompare:@"System"]
+            == NSOrderedSame) {
+            isSystem = YES;
+        }
+
+        if ([applicationType caseInsensitiveCompare:@"User"]
+            == NSOrderedSame) {
+            isSystem = NO;
+        }
+
+        // Dự phòng cho các ứng dụng Apple.
         if ([bundleID hasPrefix:@"com.apple."]) {
             isSystem = YES;
         }
 
+        // Tìm kiếm tên hoặc Bundle ID.
         if (query.length > 0) {
             BOOL nameMatches =
                 [displayName rangeOfString:query
@@ -211,6 +291,11 @@ static NSString * const kSpringBoardID = @"com.apple.springboard";
         return [a[@"name"]
             localizedCaseInsensitiveCompare:b[@"name"]];
     }];
+
+    NSLog(
+        @"[SystemFPS] Found %lu applications",
+        (unsigned long)applications.count
+    );
 
     return applications;
 }
@@ -248,6 +333,7 @@ static NSString * const kSpringBoardID = @"com.apple.springboard";
 
 - (NSArray *)specifiers {
     if (!_specifiers) {
+
         NSMutableArray *items =
             [[self loadSpecifiersFromPlistName:@"Root"
                                         target:self] mutableCopy];
@@ -269,7 +355,7 @@ static NSString * const kSpringBoardID = @"com.apple.springboard";
             }
         }
 
-        // SpringBoard riêng
+        // SpringBoard.
         [items addObject:
             [self makeGroup:@"ĐIỀU KHIỂN HỆ THỐNG"]];
 
@@ -277,9 +363,12 @@ static NSString * const kSpringBoardID = @"com.apple.springboard";
             [self makeSwitch:@"SpringBoard"
                     bundleID:kSpringBoardID]];
 
-        // System applications
+        // System applications.
         [items addObject:
-            [self makeGroup:@"ỨNG DỤNG HỆ THỐNG"]];
+            [self makeGroup:
+                [NSString stringWithFormat:
+                    @"ỨNG DỤNG HỆ THỐNG (%lu)",
+                    (unsigned long)systemApps.count]]];
 
         for (NSDictionary *app in systemApps) {
             [items addObject:
@@ -287,9 +376,12 @@ static NSString * const kSpringBoardID = @"com.apple.springboard";
                         bundleID:app[@"bundleID"]]];
         }
 
-        // User applications
+        // User applications.
         [items addObject:
-            [self makeGroup:@"ỨNG DỤNG ĐÃ CÀI"]];
+            [self makeGroup:
+                [NSString stringWithFormat:
+                    @"ỨNG DỤNG ĐÃ CÀI (%lu)",
+                    (unsigned long)userApps.count]]];
 
         for (NSDictionary *app in userApps) {
             [items addObject:
@@ -297,9 +389,12 @@ static NSString * const kSpringBoardID = @"com.apple.springboard";
                         bundleID:app[@"bundleID"]]];
         }
 
-        if (systemApps.count == 0 && userApps.count == 0) {
+        if (applications.count == 0) {
             [items addObject:
-                [self makeGroup:@"Không tìm thấy ứng dụng"]];
+                [self makeGroup:
+                    @"Không đọc được danh sách ứng dụng"]];
+
+            NSLog(@"[SystemFPS] Application list is empty");
         }
 
         _specifiers = items;
