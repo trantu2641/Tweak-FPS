@@ -14,57 +14,95 @@ permissions:
 jobs:
   build:
     runs-on: macos-15
-    timeout-minutes: 40
+    timeout-minutes: 45
 
     steps:
-      - name: Checkout
+      # 1. Download source code
+      - name: Checkout repository
         uses: actions/checkout@v4
 
+      # 2. Install dependencies
       - name: Install dependencies
         run: |
+          brew update
           brew install make dpkg ldid
 
-      - name: Install Theos
+      # 3. Install official RootHide Theos
+      - name: Install RootHide Theos
         run: |
-          git clone --recursive https://github.com/theos/theos.git $HOME/theos
+          bash -c "$(curl -fsSL https://raw.githubusercontent.com/roothide/theos/master/bin/install-theos)"
 
-      - name: Install RootHide packaging support
+      # 4. Configure Theos
+      - name: Configure Theos
         run: |
-          git clone https://github.com/roothide/theos.git /tmp/roothide-theos
+          echo "THEOS=$HOME/theos" >> $GITHUB_ENV
+          echo "$HOME/theos/bin" >> $GITHUB_PATH
 
-          if [ -d /tmp/roothide-theos ]; then
-            cp -R /tmp/roothide-theos/* $HOME/theos/
+          if [ ! -d "$HOME/theos/makefiles" ]; then
+            echo "ERROR: RootHide Theos installation not found"
+            exit 1
           fi
 
+          echo "RootHide Theos installed successfully"
+
+      # 5. Install iOS 16.5 SDK
       - name: Install iOS SDK
         run: |
-          git clone https://github.com/theos/sdks.git /tmp/sdks
+          git clone --depth 1 https://github.com/theos/sdks.git /tmp/sdks
 
-          mkdir -p $HOME/theos/sdks
+          mkdir -p "$THEOS/sdks"
 
-          cp -R /tmp/sdks/iPhoneOS16.5.sdk \
-            $HOME/theos/sdks/
+          if [ ! -d "/tmp/sdks/iPhoneOS16.5.sdk" ]; then
+            echo "ERROR: iPhoneOS16.5.sdk not found"
+            exit 1
+          fi
 
+          cp -R /tmp/sdks/iPhoneOS16.5.sdk "$THEOS/sdks/"
+
+          echo "SDK installed successfully"
+
+      # 6. Verify RootHide package scheme
       - name: Verify RootHide scheme
         run: |
-          find $HOME/theos -iname '*roothide*' -print
+          if ! grep -R -q "roothide" \
+            "$THEOS/makefiles" \
+            "$THEOS/vendor" 2>/dev/null; then
+            echo "ERROR: RootHide package scheme missing"
+            exit 1
+          fi
 
-          grep -R "roothide" \
-            $HOME/theos/makefiles \
-            $HOME/theos/vendor 2>/dev/null || true
+          echo "RootHide scheme detected"
 
+      # 7. Build SystemFPS
       - name: Build SystemFPS
         run: |
-          export THEOS=$HOME/theos
-          export PATH=$THEOS/bin:$PATH
+          export THEOS="$HOME/theos"
+          export PATH="$THEOS/bin:$PATH"
+          export THEOS_PACKAGE_SCHEME=roothide
 
           make clean
 
           make package FINALPACKAGE=1
 
-      - name: Upload DEB
+      # 8. Verify DEB
+      - name: Verify package
+        run: |
+          ls -lh packages/
+
+          DEB=$(find packages -name "*.deb" | head -n 1)
+
+          if [ -z "$DEB" ]; then
+            echo "ERROR: DEB package not found"
+            exit 1
+          fi
+
+          dpkg-deb --info "$DEB"
+
+      # 9. Upload build artifact
+      - name: Upload SystemFPS RootHide
         uses: actions/upload-artifact@v4
         with:
-          name: SystemFPS-RootHide
+          name: SystemFPS-RootHide-iOS16
           path: packages/*.deb
           if-no-files-found: error
+          retention-days: 30
