@@ -1,1 +1,54 @@
-q
+
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+ "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>items</key>
+    <array>
+        <dict>
+            <key>cell</key>
+            <string>PSGroupCell</string>
+            <key>label</key>
+            <string>ĐIỀU KHIỂN FPS</string>
+        </dict>
+
+        <dict>
+            <key>cell</key>
+            <string>PSEditTextCell</string>
+            <key>label</key>
+            <string>Tốc độ khung hình (FPS)</string>
+            <key>defaults</key>
+            <string>com.systemfps.preferences</string>
+            <key>key</key>
+            <string>TargetFPS</string>
+            <key>default</key>
+            <integer>60</integer>
+            <key>keyboard</key>
+            <string>NumberPad</string>
+        </dict>
+
+        <dict>
+            <key>cell</key>
+            <string>PSGroupCell</string>
+            <key>label</key>
+            <string>THÔNG TIN</string>
+            <key>footerText</key>
+            <string>
+                Nhập FPS từ 25 đến 60.
+                Mặc định: 60 FPS.
+                Chế độ: Cố định (Fixed).
+            </string>
+        </dict>
+
+        <dict>
+            <key>cell</key>
+            <string>PSButtonCell</string>
+            <key>label</key>
+            <string>Khôi phục 60 FPS</string>
+            <key>action</key>
+            <string>resetFPS</string>
+        </dict>
+    </array>
+</dict>
+</plist>
