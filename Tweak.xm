@@ -19,22 +19,18 @@ static BOOL gSystemFPSEnabled = NO;
 
 static NSHashTable<CADisplayLink *> *gDisplayLinks;
 
-// Phân biệt lệnh do tweak gọi và lệnh do ứng dụng gọi.
 static __thread BOOL gApplyingSystemFPS = NO;
 
-// Lưu FPS gốc của từng CADisplayLink.
 static char kOriginalFPSKey;
 static char kOriginalRangeKey;
 
 #pragma mark - Current process
 
 static NSString *SystemFPSCurrentBundleID(void) {
-    NSString *bundleID = NSBundle.mainBundle.bundleIdentifier;
-
-    return bundleID ?: @"";
+    return NSBundle.mainBundle.bundleIdentifier ?: @"";
 }
 
-#pragma mark - Preferences
+#pragma mark - Settings
 
 static NSInteger SystemFPSClamp(NSInteger fps) {
     return MAX(25, MIN(60, fps));
@@ -71,7 +67,6 @@ static void SystemFPSLoadSettings(void) {
 
     NSString *bundleID = SystemFPSCurrentBundleID();
 
-    // Lần đầu cài đặt: giữ SpringBoard bật như cấu hình cũ.
     if (!enabledValue) {
         gSystemFPSEnabled =
             [bundleID isEqualToString:@"com.apple.springboard"];
@@ -111,7 +106,7 @@ static void SystemFPSRegisterLink(CADisplayLink *link) {
     }
 }
 
-#pragma mark - Original FPS storage
+#pragma mark - Original values
 
 static void SystemFPSStoreOriginalFPS(
     CADisplayLink *link,
@@ -157,7 +152,7 @@ static void SystemFPSStoreOriginalRange(
     );
 }
 
-#pragma mark - Apply and restore
+#pragma mark - Apply FPS
 
 static void SystemFPSApplyToLink(CADisplayLink *link) {
     if (!link) return;
@@ -169,15 +164,11 @@ static void SystemFPSApplyToLink(CADisplayLink *link) {
     if (gSystemFPSEnabled) {
         [link setPreferredFramesPerSecond:gTargetFPS];
     } else {
-        NSArray *savedRange = objc_getAssociatedObject(
-            link,
-            &kOriginalRangeKey
-        );
+        NSArray *savedRange =
+            objc_getAssociatedObject(link, &kOriginalRangeKey);
 
-        NSNumber *savedFPS = objc_getAssociatedObject(
-            link,
-            &kOriginalFPSKey
-        );
+        NSNumber *savedFPS =
+            objc_getAssociatedObject(link, &kOriginalFPSKey);
 
         if ([savedRange isKindOfClass:NSArray.class] &&
             savedRange.count == 3) {
@@ -196,7 +187,6 @@ static void SystemFPSApplyToLink(CADisplayLink *link) {
 
         } else {
 
-            // Giá trị 0 trả quyền lựa chọn FPS về hệ thống.
             [link setPreferredFramesPerSecond:0];
         }
     }
@@ -219,7 +209,7 @@ static void SystemFPSRefreshAllLinks(void) {
     }
 
     NSLog(
-        @"[SystemFPS] %@ | FPS: %ld | PID: %d | Bundle: %@",
+        @"[SystemFPS] %@ | FPS:%ld | PID:%d | Bundle:%@",
         gSystemFPSEnabled ? @"ON" : @"OFF",
         (long)gTargetFPS,
         getpid(),
@@ -239,13 +229,12 @@ static void SystemFPSReloadCallback(
     SystemFPSRefreshAllLinks();
 }
 
-#pragma mark - CADisplayLink hooks
+#pragma mark - CADisplayLink
 
 %hook CADisplayLink
 
 + (CADisplayLink *)displayLinkWithTarget:(id)target
                                 selector:(SEL)selector {
-
     CADisplayLink *link = %orig(target, selector);
 
     SystemFPSRegisterLink(link);
@@ -255,7 +244,6 @@ static void SystemFPSReloadCallback(
 }
 
 - (void)setPreferredFramesPerSecond:(NSInteger)framesPerSecond {
-
     if (!gApplyingSystemFPS) {
         SystemFPSStoreOriginalFPS(self, framesPerSecond);
     }
@@ -270,7 +258,6 @@ static void SystemFPSReloadCallback(
 }
 
 - (void)setPreferredFrameRateRange:(CAFrameRateRange)range {
-
     if (!gApplyingSystemFPS) {
         SystemFPSStoreOriginalRange(self, range);
     }
@@ -278,7 +265,6 @@ static void SystemFPSReloadCallback(
     SystemFPSLoadSettings();
 
     if (gSystemFPSEnabled && !gApplyingSystemFPS) {
-
         CAFrameRateRange limitedRange;
 
         limitedRange.minimum = (float)gTargetFPS;
@@ -286,16 +272,13 @@ static void SystemFPSReloadCallback(
         limitedRange.preferred = (float)gTargetFPS;
 
         %orig(limitedRange);
-
     } else {
-
         %orig(range);
     }
 }
 
 - (void)addToRunLoop:(NSRunLoop *)runLoop
              forMode:(NSRunLoopMode)mode {
-
     %orig(runLoop, mode);
 
     SystemFPSRegisterLink(self);
@@ -308,7 +291,6 @@ static void SystemFPSReloadCallback(
 
 %ctor {
     @autoreleasepool {
-
         SystemFPSLoadSettings();
         SystemFPSInitRegistry();
 
@@ -322,7 +304,7 @@ static void SystemFPSReloadCallback(
         );
 
         NSLog(
-            @"[SystemFPS] Loaded | %@ | FPS: %ld | PID: %d | Bundle: %@",
+            @"[SystemFPS] Loaded | %@ | FPS:%ld | PID:%d | Bundle:%@",
             gSystemFPSEnabled ? @"ON" : @"OFF",
             (long)gTargetFPS,
             getpid(),
