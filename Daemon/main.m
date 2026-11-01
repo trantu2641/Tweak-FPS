@@ -14,19 +14,15 @@ static NSString *SystemFPSFilterPath(void) {
     return [NSString stringWithUTF8String:path];
 }
 
-static NSDictionary *SystemFPSCreateFilter(void) {
-    return @{
+static void SystemFPSWriteFilter(void) {
+    NSDictionary *filter = @{
         @"Filter": @{
             @"Bundles": @[
-                @"com.apple.springboard",
-                @"com.apple.UIKit"
+                @"com.apple.UIKit",
+                @"com.apple.springboard"
             ]
         }
     };
-}
-
-static void SystemFPSWriteFilter(void) {
-    NSDictionary *filter = SystemFPSCreateFilter();
 
     NSError *error = nil;
 
@@ -42,17 +38,13 @@ static void SystemFPSWriteFilter(void) {
             @"[SystemFPSDaemon] Serialization failed: %@",
             error
         );
-
         return;
     }
 
     NSString *path = SystemFPSFilterPath();
 
     if (!path) {
-        NSLog(
-            @"[SystemFPSDaemon] Invalid filter path"
-        );
-
+        NSLog(@"[SystemFPSDaemon] Invalid filter path");
         return;
     }
 
@@ -61,17 +53,11 @@ static void SystemFPSWriteFilter(void) {
                   options:NSDataWritingAtomic
                     error:&error];
 
-    if (success) {
-        NSLog(
-            @"[SystemFPSDaemon] Filter updated: %@",
-            path
-        );
-    } else {
-        NSLog(
-            @"[SystemFPSDaemon] Filter write failed: %@",
-            error
-        );
-    }
+    NSLog(
+        @"[SystemFPSDaemon] Filter %@: %@",
+        success ? @"updated" : @"failed",
+        error ?: path
+    );
 }
 
 int main(int argc, char *argv[]) {
