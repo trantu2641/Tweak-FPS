@@ -19,10 +19,14 @@ static NSInteger gTargetFPS = 60;
 static BOOL gSystemFPSEnabled = NO;
 
 static NSHashTable<CADisplayLink *> *gDisplayLinks;
-static __thread BOOL gApplyingSystemFPS = NO;
+static NSHashTable<CAAnimation *> *gAnimations;
 
-static char kOriginalFPSKey;
-static char kOriginalRangeKey;
+static __thread BOOL gApplyingLinkFPS = NO;
+static __thread BOOL gApplyingAnimationFPS = NO;
+
+static char kOriginalLinkRangeKey;
+static char kOriginalLinkFPSKey;
+static char kOriginalAnimationRangeKey;
 
 #pragma mark - Current process
 
@@ -53,6 +57,7 @@ static void SystemFPSLoadSettings(void) {
                 &fps
             );
         }
+
         CFRelease(fpsValue);
     }
 
@@ -66,23 +71,93 @@ static void SystemFPSLoadSettings(void) {
 
     NSString *bundleID = SystemFPSCurrentBundleID();
 
-    if (!enabledValue) {
-        gSystemFPSEnabled =
-            [bundleID isEqualToString:@"com.apple.springboard"];
-        return;
-    }
+    BOOL enabled =
+        [bundleID isEqualToString:@"com.apple.springboard"];
 
-    gSystemFPSEnabled = NO;
+    if (enabledValue &&
+        CFGetTypeID(enabledValue) == CFArrayGetTypeID()) {
 
-    if (CFGetTypeID(enabledValue) == CFArrayGetTypeID()) {
         NSArray *enabledBundles =
             (__bridge NSArray *)enabledValue;
 
-        gSystemFPSEnabled =
-            [enabledBundles containsObject:bundleID];
+        enabled = [enabledBundles containsObject:bundleID];
     }
 
-    CFRelease(enabledValue);
+    if (enabledValue) {
+        CFRelease(enabledValue);
+    }
+
+    gSystemFPSEnabled = enabled;
+}
+
+#pragma mark - Frame rate range
+
+static CAFrameRateRange SystemFPSLimitRange(
+    CAFrameRateRange requested
+) {
+    float limit = (float)gTargetFPS;
+
+    CAFrameRateRange result;
+
+    float maximum = requested.maximum;
+
+    if (!(maximum > 0.0f) || maximum > limit) {
+        maximum = limit;
+    }
+
+    float minimum = requested.minimum;
+
+    if (!(minimum >= 0.0f)) {
+        minimum = 0.0f;
+    }
+
+    if (minimum > maximum) {
+        minimum = maximum;
+    }
+
+    float preferred = requested.preferred;
+
+    if (!(preferred > 0.0f) || preferred > maximum) {
+        preferred = maximum;
+    }
+
+    if (preferred < minimum) {
+        preferred = minimum;
+    }
+
+    result.minimum = minimum;
+    result.maximum = maximum;
+    result.preferred = preferred;
+
+    return result;
+}
+
+static NSArray *SystemFPSValuesFromRange(
+    CAFrameRateRange range
+) {
+    return @[
+        @(range.minimum),
+        @(range.maximum),
+        @(range.preferred)
+    ];
+}
+
+static BOOL SystemFPSRangeFromValues(
+    id values,
+    CAFrameRateRange *range
+) {
+    if (![values isKindOfClass:NSArray.class] ||
+        [(NSArray *)values count] != 3) {
+        return NO;
+    }
+
+    NSArray *items = (NSArray *)values;
+
+    range->minimum = [items[0] floatValue];
+    range->maximum = [items[1] floatValue];
+    range->preferred = [items[2] floatValue];
+
+    return YES;
 }
 
 #pragma mark - Registry
@@ -92,6 +167,7 @@ static void SystemFPSInitRegistry(void) {
 
     dispatch_once(&onceToken, ^{
         gDisplayLinks = [NSHashTable weakObjectsHashTable];
+        gAnimations = [NSHashTable weakObjectsHashTable];
     });
 }
 
@@ -105,92 +181,314 @@ static void SystemFPSRegisterLink(CADisplayLink *link) {
     }
 }
 
-#pragma mark - Original values
+static void SystemFPSRegisterAnimation(CAAnimation *animation) {
+    if (!animation) return;
 
-static void SystemFPSStoreOriginalFPS(
+    SystemFPSInitRegistry();
+
+    @synchronized (gAnimations) {
+        [gAnimations addObject:animation];
+    }
+}
+
+#pragma mark - Original CADisplayLink values
+
+static void SystemFPSStoreOriginalLinkFPS(
     CADisplayLink *link,
     NSInteger fps
 ) {
     objc_setAssociatedObject(
         link,
-        &kOriginalFPSKey,
+        &kOriginalLinkFPSKey,
         @(fps),
         OBJC_ASSOCIATION_RETAIN_NONATOMIC
     );
 
     objc_setAssociatedObject(
         link,
-        &kOriginalRangeKey,
+        &kOriginalLinkRangeKey,
         nil,
         OBJC_ASSOCIATION_RETAIN_NONATOMIC
     );
 }
 
-static void SystemFPSStoreOriginalRange(
+static void SystemFPSStoreOriginalLinkRange(
     CADisplayLink *link,
     CAFrameRateRange range
 ) {
-    NSArray *values = @[
-        @(range.minimum),
-        @(range.maximum),
-        @(range.preferred)
-    ];
-
     objc_setAssociatedObject(
         link,
-        &kOriginalRangeKey,
-        values,
+        &kOriginalLinkRangeKey,
+        SystemFPSValuesFromRange(range),
         OBJC_ASSOCIATION_RETAIN_NONATOMIC
     );
 
     objc_setAssociatedObject(
         link,
-        &kOriginalFPSKey,
+        &kOriginalLinkFPSKey,
         nil,
         OBJC_ASSOCIATION_RETAIN_NONATOMIC
     );
 }
 
-#pragma mark - Apply FPS
+static void SystemFPSCaptureOriginalLink(
+    CADisplayLink *link
+) {
+    if (!link) return;
+
+    id savedRange =
+        objc_getAssociatedObject(link, &kOriginalLinkRangeKey);
+
+    id savedFPS =
+        objc_getAssociatedObject(link, &kOriginalLinkFPSKey);
+
+    if (savedRange || savedFPS) {
+        return;
+    }
+
+    if (@available(iOS 15.0, *)) {
+        if ([link respondsToSelector:
+             @selector(setPreferredFrameRateRange:)]) {
+
+            SystemFPSStoreOriginalLinkRange(
+                link,
+                link.preferredFrameRateRange
+            );
+
+            return;
+        }
+    }
+
+    SystemFPSStoreOriginalLinkFPS(
+        link,
+        link.preferredFramesPerSecond
+    );
+}
+
+#pragma mark - Apply CADisplayLink
+
+static void SystemFPSSetLinkRange(
+    CADisplayLink *link,
+    CAFrameRateRange range
+) {
+    if (@available(iOS 15.0, *)) {
+        gApplyingLinkFPS = YES;
+
+        @try {
+            link.preferredFrameRateRange = range;
+        }
+        @finally {
+            gApplyingLinkFPS = NO;
+        }
+    }
+}
+
+static void SystemFPSSetLinkFPS(
+    CADisplayLink *link,
+    NSInteger fps
+) {
+    gApplyingLinkFPS = YES;
+
+    @try {
+        link.preferredFramesPerSecond = fps;
+    }
+    @finally {
+        gApplyingLinkFPS = NO;
+    }
+}
 
 static void SystemFPSApplyToLink(CADisplayLink *link) {
     if (!link) return;
 
-    SystemFPSLoadSettings();
+    SystemFPSCaptureOriginalLink(link);
 
-    gApplyingSystemFPS = YES;
+    NSArray *savedRange =
+        objc_getAssociatedObject(link, &kOriginalLinkRangeKey);
 
-    if (gSystemFPSEnabled) {
-        [link setPreferredFramesPerSecond:gTargetFPS];
-    } else {
-        NSArray *savedRange =
-            objc_getAssociatedObject(link, &kOriginalRangeKey);
+    NSNumber *savedFPS =
+        objc_getAssociatedObject(link, &kOriginalLinkFPSKey);
 
-        NSNumber *savedFPS =
-            objc_getAssociatedObject(link, &kOriginalFPSKey);
+    if (savedRange) {
+        CAFrameRateRange original;
 
-        if ([savedRange isKindOfClass:NSArray.class] &&
-            savedRange.count == 3) {
+        if (SystemFPSRangeFromValues(savedRange, &original)) {
 
-            CAFrameRateRange range;
-            range.minimum = [savedRange[0] floatValue];
-            range.maximum = [savedRange[1] floatValue];
-            range.preferred = [savedRange[2] floatValue];
+            CAFrameRateRange result = original;
 
-            [link setPreferredFrameRateRange:range];
+            if (gSystemFPSEnabled) {
+                result = SystemFPSLimitRange(original);
+            }
 
-        } else if ([savedFPS isKindOfClass:NSNumber.class]) {
-            [link setPreferredFramesPerSecond:savedFPS.integerValue];
-        } else {
-            [link setPreferredFramesPerSecond:0];
+            SystemFPSSetLinkRange(link, result);
+            return;
         }
     }
 
-    gApplyingSystemFPS = NO;
+    if (savedFPS) {
+        NSInteger original = savedFPS.integerValue;
+        NSInteger result = original;
+
+        if (gSystemFPSEnabled) {
+            if (result <= 0 || result > gTargetFPS) {
+                result = gTargetFPS;
+            }
+        }
+
+        SystemFPSSetLinkFPS(link, result);
+    }
 }
 
+#pragma mark - Original CAAnimation values
+
+static void SystemFPSStoreOriginalAnimationRange(
+    CAAnimation *animation,
+    CAFrameRateRange range
+) {
+    objc_setAssociatedObject(
+        animation,
+        &kOriginalAnimationRangeKey,
+        SystemFPSValuesFromRange(range),
+        OBJC_ASSOCIATION_RETAIN_NONATOMIC
+    );
+}
+
+#pragma mark - Animation range
+
+static void SystemFPSSetAnimationRange(
+    CAAnimation *animation,
+    CAFrameRateRange range
+) {
+    if (!animation) return;
+
+    if (@available(iOS 15.0, *)) {
+        gApplyingAnimationFPS = YES;
+
+        @try {
+            animation.preferredFrameRateRange = range;
+        }
+        @finally {
+            gApplyingAnimationFPS = NO;
+        }
+    }
+}
+
+#pragma mark - Apply Core Animation
+
+static void SystemFPSApplyAnimationTree(
+    CAAnimation *animation,
+    NSUInteger depth
+) {
+    if (!animation || depth > 8) {
+        return;
+    }
+
+    SystemFPSRegisterAnimation(animation);
+
+    if (@available(iOS 15.0, *)) {
+
+        NSArray *savedRange =
+            objc_getAssociatedObject(
+                animation,
+                &kOriginalAnimationRangeKey
+            );
+
+        if (!savedRange) {
+            SystemFPSStoreOriginalAnimationRange(
+                animation,
+                animation.preferredFrameRateRange
+            );
+
+            savedRange =
+                objc_getAssociatedObject(
+                    animation,
+                    &kOriginalAnimationRangeKey
+                );
+        }
+
+        CAFrameRateRange original;
+
+        if (SystemFPSRangeFromValues(savedRange, &original)) {
+
+            CAFrameRateRange result = original;
+
+            if (gSystemFPSEnabled) {
+                result = SystemFPSLimitRange(original);
+            }
+
+            SystemFPSSetAnimationRange(animation, result);
+        }
+    }
+
+    if ([animation isKindOfClass:CAAnimationGroup.class]) {
+
+        CAAnimationGroup *group =
+            (CAAnimationGroup *)animation;
+
+        NSArray<CAAnimation *> *children =
+            group.animations;
+
+        for (CAAnimation *child in children) {
+            SystemFPSApplyAnimationTree(
+                child,
+                depth + 1
+            );
+        }
+    }
+}
+
+#pragma mark - Preserve animation settings when copied
+
+static void SystemFPSPropagateAnimationOriginals(
+    CAAnimation *source,
+    CAAnimation *destination,
+    NSUInteger depth
+) {
+    if (!source || !destination || depth > 8) {
+        return;
+    }
+
+    NSArray *savedRange =
+        objc_getAssociatedObject(
+            source,
+            &kOriginalAnimationRangeKey
+        );
+
+    if (savedRange) {
+        objc_setAssociatedObject(
+            destination,
+            &kOriginalAnimationRangeKey,
+            [savedRange copy],
+            OBJC_ASSOCIATION_RETAIN_NONATOMIC
+        );
+
+        SystemFPSRegisterAnimation(destination);
+    }
+
+    if ([source isKindOfClass:CAAnimationGroup.class] &&
+        [destination isKindOfClass:CAAnimationGroup.class]) {
+
+        NSArray *sourceChildren =
+            ((CAAnimationGroup *)source).animations;
+
+        NSArray *destinationChildren =
+            ((CAAnimationGroup *)destination).animations;
+
+        NSUInteger count =
+            MIN(sourceChildren.count, destinationChildren.count);
+
+        for (NSUInteger i = 0; i < count; i++) {
+            SystemFPSPropagateAnimationOriginals(
+                sourceChildren[i],
+                destinationChildren[i],
+                depth + 1
+            );
+        }
+    }
+}
+
+#pragma mark - Refresh all objects
+
 static void SystemFPSRefreshAllLinks(void) {
-    SystemFPSLoadSettings();
     SystemFPSInitRegistry();
 
     NSArray<CADisplayLink *> *links;
@@ -202,17 +500,53 @@ static void SystemFPSRefreshAllLinks(void) {
     for (CADisplayLink *link in links) {
         SystemFPSApplyToLink(link);
     }
+}
+
+static void SystemFPSRefreshAllAnimations(void) {
+    SystemFPSInitRegistry();
+
+    NSArray<CAAnimation *> *animations;
+
+    @synchronized (gAnimations) {
+        animations = gAnimations.allObjects;
+    }
+
+    for (CAAnimation *animation in animations) {
+        SystemFPSApplyAnimationTree(animation, 0);
+    }
+}
+
+static void SystemFPSRefreshAll(void) {
+    SystemFPSLoadSettings();
+
+    SystemFPSRefreshAllLinks();
+    SystemFPSRefreshAllAnimations();
+
+    SystemFPSInitRegistry();
+
+    NSUInteger linkCount;
+    NSUInteger animationCount;
+
+    @synchronized (gDisplayLinks) {
+        linkCount = gDisplayLinks.allObjects.count;
+    }
+
+    @synchronized (gAnimations) {
+        animationCount = gAnimations.allObjects.count;
+    }
 
     NSLog(
-        @"[SystemFPS] %@ | FPS:%ld | PID:%d | Bundle:%@",
+        @"[SystemFPS] REFRESH | %@ | FPS:%ld | PID:%d | Bundle:%@ | Links:%lu | Animations:%lu",
         gSystemFPSEnabled ? @"ON" : @"OFF",
         (long)gTargetFPS,
         getpid(),
-        SystemFPSCurrentBundleID()
+        SystemFPSCurrentBundleID(),
+        (unsigned long)linkCount,
+        (unsigned long)animationCount
     );
 }
 
-#pragma mark - Notification
+#pragma mark - Darwin notification
 
 static void SystemFPSReloadCallback(
     CFNotificationCenterRef center,
@@ -221,7 +555,7 @@ static void SystemFPSReloadCallback(
     const void *object,
     CFDictionaryRef userInfo
 ) {
-    SystemFPSRefreshAllLinks();
+    SystemFPSRefreshAll();
 }
 
 #pragma mark - CADisplayLink hooks
@@ -230,43 +564,49 @@ static void SystemFPSReloadCallback(
 
 + (CADisplayLink *)displayLinkWithTarget:(id)target
                                 selector:(SEL)selector {
-    CADisplayLink *link = %orig(target, selector);
 
-    SystemFPSRegisterLink(link);
-    SystemFPSApplyToLink(link);
+    CADisplayLink *link =
+        %orig(target, selector);
+
+    if (link) {
+        SystemFPSRegisterLink(link);
+        SystemFPSApplyToLink(link);
+    }
 
     return link;
 }
 
 - (void)setPreferredFramesPerSecond:(NSInteger)framesPerSecond {
-    if (!gApplyingSystemFPS) {
-        SystemFPSStoreOriginalFPS(self, framesPerSecond);
+
+    if (!gApplyingLinkFPS) {
+        SystemFPSStoreOriginalLinkFPS(
+            self,
+            framesPerSecond
+        );
     }
 
-    SystemFPSLoadSettings();
+    NSInteger result = framesPerSecond;
 
-    if (gSystemFPSEnabled && !gApplyingSystemFPS) {
-        %orig(gTargetFPS);
-    } else {
-        %orig(framesPerSecond);
+    if (gSystemFPSEnabled && !gApplyingLinkFPS) {
+        if (result <= 0 || result > gTargetFPS) {
+            result = gTargetFPS;
+        }
     }
+
+    %orig(result);
 }
 
 - (void)setPreferredFrameRateRange:(CAFrameRateRange)range {
-    if (!gApplyingSystemFPS) {
-        SystemFPSStoreOriginalRange(self, range);
+
+    if (!gApplyingLinkFPS) {
+        SystemFPSStoreOriginalLinkRange(
+            self,
+            range
+        );
     }
 
-    SystemFPSLoadSettings();
-
-    if (gSystemFPSEnabled && !gApplyingSystemFPS) {
-        CAFrameRateRange limitedRange;
-
-        limitedRange.minimum = (float)gTargetFPS;
-        limitedRange.maximum = (float)gTargetFPS;
-        limitedRange.preferred = (float)gTargetFPS;
-
-        %orig(limitedRange);
+    if (gSystemFPSEnabled && !gApplyingLinkFPS) {
+        %orig(SystemFPSLimitRange(range));
     } else {
         %orig(range);
     }
@@ -274,10 +614,66 @@ static void SystemFPSReloadCallback(
 
 - (void)addToRunLoop:(NSRunLoop *)runLoop
              forMode:(NSRunLoopMode)mode {
+
     %orig(runLoop, mode);
 
     SystemFPSRegisterLink(self);
     SystemFPSApplyToLink(self);
+}
+
+%end
+
+#pragma mark - CAAnimation hooks
+
+%hook CAAnimation
+
+- (void)setPreferredFrameRateRange:(CAFrameRateRange)range {
+
+    if (!gApplyingAnimationFPS) {
+        SystemFPSStoreOriginalAnimationRange(
+            self,
+            range
+        );
+
+        SystemFPSRegisterAnimation(self);
+    }
+
+    if (gSystemFPSEnabled && !gApplyingAnimationFPS) {
+        %orig(SystemFPSLimitRange(range));
+    } else {
+        %orig(range);
+    }
+}
+
+- (id)copyWithZone:(NSZone *)zone {
+
+    CAAnimation *copy = %orig;
+
+    if (copy && copy != self) {
+        SystemFPSPropagateAnimationOriginals(
+            self,
+            copy,
+            0
+        );
+    }
+
+    return copy;
+}
+
+%end
+
+#pragma mark - CALayer hooks
+
+%hook CALayer
+
+- (void)addAnimation:(CAAnimation *)animation
+              forKey:(NSString *)key {
+
+    if (animation) {
+        SystemFPSApplyAnimationTree(animation, 0);
+    }
+
+    %orig(animation, key);
 }
 
 %end
@@ -287,11 +683,11 @@ static void SystemFPSReloadCallback(
 %ctor {
     @autoreleasepool {
 
-        // QUAN TRỌNG: Kích hoạt toàn bộ hook Logos.
+        // Initialize every Logos hook.
         %init;
 
-        SystemFPSLoadSettings();
         SystemFPSInitRegistry();
+        SystemFPSLoadSettings();
 
         CFNotificationCenterAddObserver(
             CFNotificationCenterGetDarwinNotifyCenter(),
@@ -303,7 +699,7 @@ static void SystemFPSReloadCallback(
         );
 
         NSLog(
-            @"[SystemFPS] HOOKS INITIALIZED | %@ | FPS:%ld | PID:%d | Bundle:%@",
+            @"[SystemFPS] INITIALIZED | %@ | FPS:%ld | PID:%d | Bundle:%@",
             gSystemFPSEnabled ? @"ON" : @"OFF",
             (long)gTargetFPS,
             getpid(),
