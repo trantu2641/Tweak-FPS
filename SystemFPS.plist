@@ -6,10 +6,36 @@
 <dict>
     <key>Filter</key>
     <dict>
+        <key>Mode</key>
+        <string>Any</string>
+
         <key>Bundles</key>
         <array>
+            <!-- Framework và hệ thống -->
             <string>com.apple.UIKit</string>
             <string>com.apple.springboard</string>
+
+            <!-- Meta -->
+            <string>com.facebook.Messenger</string>
+            <string>com.facebook.Facebook</string>
+
+            <!-- Google -->
+            <string>com.google.ios.youtube</string>
+            <string>com.google.Photos</string>
+
+            <!-- TikTok -->
+            <string>com.zhiliaoapp.musically</string>
+
+            <!-- Zalo -->
+            <string>com.zing.zalo</string>
+        </array>
+
+        <key>Classes</key>
+        <array>
+            <string>UIApplication</string>
+            <string>UIView</string>
+            <string>UIViewController</string>
+            <string>UIWindow</string>
         </array>
     </dict>
 </dict>
