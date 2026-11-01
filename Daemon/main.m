@@ -1,3 +1,4 @@
+
 #import <Foundation/Foundation.h>
 #import <CoreFoundation/CoreFoundation.h>
 #import <roothide.h>
@@ -6,17 +7,26 @@ static NSString *SystemFPSFilterPath(void) {
     const char *path =
         jbroot("/Library/MobileSubstrate/DynamicLibraries/SystemFPS.plist");
 
-    return path ? [NSString stringWithUTF8String:path] : nil;
+    if (!path) {
+        return nil;
+    }
+
+    return [NSString stringWithUTF8String:path];
 }
 
-static void SystemFPSWriteFilter(void) {
-    NSDictionary *filter = @{
+static NSDictionary *SystemFPSCreateFilter(void) {
+    return @{
         @"Filter": @{
             @"Bundles": @[
+                @"com.apple.springboard",
                 @"com.apple.UIKit"
             ]
         }
     };
+}
+
+static void SystemFPSWriteFilter(void) {
+    NSDictionary *filter = SystemFPSCreateFilter();
 
     NSError *error = nil;
 
@@ -28,14 +38,21 @@ static void SystemFPSWriteFilter(void) {
             error:&error];
 
     if (!data) {
-        NSLog(@"[SystemFPSDaemon] Serialize error: %@", error);
+        NSLog(
+            @"[SystemFPSDaemon] Serialization failed: %@",
+            error
+        );
+
         return;
     }
 
     NSString *path = SystemFPSFilterPath();
 
     if (!path) {
-        NSLog(@"[SystemFPSDaemon] Invalid filter path");
+        NSLog(
+            @"[SystemFPSDaemon] Invalid filter path"
+        );
+
         return;
     }
 
@@ -44,9 +61,17 @@ static void SystemFPSWriteFilter(void) {
                   options:NSDataWritingAtomic
                     error:&error];
 
-    NSLog(@"[SystemFPSDaemon] Filter %@: %@",
-          success ? @"updated" : @"failed",
-          error ?: path);
+    if (success) {
+        NSLog(
+            @"[SystemFPSDaemon] Filter updated: %@",
+            path
+        );
+    } else {
+        NSLog(
+            @"[SystemFPSDaemon] Filter write failed: %@",
+            error
+        );
+    }
 }
 
 int main(int argc, char *argv[]) {
